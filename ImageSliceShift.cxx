@@ -1,32 +1,36 @@
-#include <vtkPlaneWidget.h>
 #include <vtkRenderer.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
-#include <vtkSmartPointer.h>
+#include <vtkNew.h>
+#include <vtkImplicitPlaneWidget2.h>
+#include <vtkImplicitPlaneRepresentation.h>
 
 int main(int, char *[])
 {
-  vtkSmartPointer<vtkRenderer> renderer =
-    vtkSmartPointer<vtkRenderer>::New();
+  vtkNew<vtkRenderer> renderer;
 
-  vtkSmartPointer<vtkRenderWindow> renderWindow =
-    vtkSmartPointer<vtkRenderWindow>::New();
-  renderWindow->AddRenderer(renderer);
+  vtkNew<vtkRenderWindow> renderWindow;
+  renderWindow->AddRenderer(renderer.GetPointer());
 
-  vtkSmartPointer<vtkRenderWindowInteractor> renderWindowInteractor =
-    vtkSmartPointer<vtkRenderWindowInteractor>::New();
-  renderWindowInteractor->SetRenderWindow(renderWindow);
+  vtkNew<vtkRenderWindowInteractor> renderWindowInteractor;
+  renderWindowInteractor->SetRenderWindow(renderWindow.GetPointer());
 
-  vtkSmartPointer<vtkPlaneWidget> planeWidget =
-      vtkSmartPointer<vtkPlaneWidget>::New();
-  planeWidget->SetInteractor(renderWindowInteractor);
+  vtkNew<vtkImplicitPlaneRepresentation> rep;
+  rep->SetPlaceFactor(1.25); // This must be set prior to placing the widget
+  rep->PlaceWidget(actor->GetBounds());
+  rep->SetNormal(plane->GetNormal());
+  rep->SetOrigin(0,0,50); //this doesn't seem to work?
 
-  planeWidget->On();
+  vtkNew<vtkImplicitPlaneWidget2> planeWidget;
+  planeWidget->SetInteractor(renderWindowInteractor.GetPointer());
+  planeWidget->SetRepresentation(rep.GetPointer());
 
-  renderWindowInteractor->Initialize();
 
   renderer->ResetCamera();
+  renderWindowInteractor->Initialize();
   renderWindow->Render();
+  planeWidget->On();
+
   renderWindowInteractor->Start();
 
   return EXIT_SUCCESS;
