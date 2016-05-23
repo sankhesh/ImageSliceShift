@@ -17,7 +17,19 @@
 #include <vtkImageMapper3D.h>
 #include <vtkPlaneSource.h>
 #include <vtkMatrix4x4.h>
+#include <vtkMath.h>
+#include <vtkTransform.h>
 
+//-----------------------------------------------------------------------------
+#define print(name, length) \
+  std::cout << #name << " : "; \
+  for(int i = 0; i < length; ++i) \
+    { \
+    std::cout << name[i] << " "; \
+    } \
+  std::cout << std::endl; \
+
+//-----------------------------------------------------------------------------
 class vtkISSCallback : public vtkCommand
 {
 public:
@@ -41,50 +53,33 @@ public:
     double origin[3], normal[3];
     this->Plane->GetOrigin(origin);
     this->Plane->GetNormal(normal);
-    vtkNew<vtkPlaneSource> s;
-    s->SetNormal(normal);
-    s->SetOrigin(origin);
-    s->Update();
 
-    double x[3] = {1, 0, 0};
-    double y[3] = {0, 1, 0};
-    double xproj[3], yproj[3];
-    this->Plane->ProjectPoint(x, xproj);
-    this->Plane->ProjectPoint(y, yproj);
-    std::cout << "normal: " << normal[0] << " " << normal[1] << " " << normal[2] << std::endl;
-    std::cout << "origin: " << origin[0] << " " << origin[1] << " " << origin[2] << std::endl;
-    std::cout << "xproj: " << xproj[0] << " " << xproj[1] << " " << xproj[2] << std::endl;
-    std::cout << "yproj: " << yproj[0] << " " << yproj[1] << " " << yproj[2] << std::endl;
-
-    double v1[3], v2[3];
-    vtkMath::Subtract(xproj, origin, v1);
-    vtkMath::Subtract(yproj, origin, v2);
-
-    vtkNew<vtkMatrix4x4> resliceAxes;
-    resliceAxes->Identity();
-
-    for ( int i = 0; i < 3; i++ )
+    double oldx[3], oldy[3], oldz[3];
+    this->ImageReslice->GetResliceAxesDirectionCosines(oldx,oldy,oldz);
+    double axis[3];
+    vtkMath::Cross(oldz,normal,axis);
+    if ( vtkMath::Normalize(axis) < 1.0e-15 )
       {
-      resliceAxes->SetElement(0,i,v1[i]);
-      resliceAxes->SetElement(1,i,v2[i]);
-      resliceAxes->SetElement(2,i,normal[i]);
+      this->ImageReslice->SetResliceAxesOrigin(origin);
+      return;
       }
+    double cos_theta = vtkMath::Dot(oldz, normal);
+    double theta = vtkMath::DegreesFromRadians(acos( cos_theta ));
+    vtkNew<vtkTransform> transform;
+    transform->Identity();
+    transform->Translate(origin[0],origin[1],origin[2]);
+    transform->RotateWXYZ(theta,axis);
+    transform->Translate(-origin[0],-origin[1],-origin[2]);
 
-    double planeOrigin[4];
-    this->Plane->GetOrigin(planeOrigin);
-    planeOrigin[3] = 1.0;
-    double originXYZW[4];
-    double neworiginXYZW[4];
+    //Set the new x
+    double x[3];
+    transform->TransformNormal(oldx,x);
+    //Set the new y
+    double y[3];
+    transform->TransformNormal(oldy,y);
 
-    resliceAxes->MultiplyPoint(planeOrigin, originXYZW);
-    resliceAxes->Transpose();
-    resliceAxes->MultiplyPoint(originXYZW, neworiginXYZW);
-
-    resliceAxes->SetElement(0,3,neworiginXYZW[0]);
-    resliceAxes->SetElement(1,3,neworiginXYZW[1]);
-    resliceAxes->SetElement(2,3,neworiginXYZW[2]);
-    resliceAxes->PrintSelf(std::cout, vtkIndent());
-    ImageReslice->SetResliceAxes(resliceAxes.GetPointer());
+    this->ImageReslice->SetResliceAxesDirectionCosines(x,y,normal);
+    this->ImageReslice->SetResliceAxesOrigin(origin);
     Ren->ResetCamera();
     }
 
@@ -95,6 +90,7 @@ public:
   vtkRenderer* Ren;
 };
 
+//-----------------------------------------------------------------------------
 int main(int argc, char *argv[])
 {
   vtkNew<vtkDICOMImageReader> reader;
@@ -104,25 +100,18 @@ int main(int argc, char *argv[])
   vtkImageData* im = reader->GetOutput();
   double range[2];
   im->GetScalarRange(range);
-  int dims[3], extent[6];
-  double spacing[3], origin[3], bounds[6];
-  im->GetDimensions(dims);
+  int imDims[3], extent[6];
+  double imSpacing[3], imOrigin[3], imBounds[6];
+  im->GetDimensions(imDims);
   im->GetExtent(extent);
-  im->GetSpacing(spacing);
-  im->GetOrigin(origin);
-  im->GetBounds(bounds);
+  im->GetSpacing(imSpacing);
+  im->GetOrigin(imOrigin);
+  im->GetBounds(imBounds);
 
-  std::cout << "Dimensions: " << dims[0] << " " <<
-    dims[1] << " " << dims[2] << std::endl;
-  std::cout << "Origin: " << origin[0] << " " <<
-    origin[1] << " " << origin[2] << std::endl;
-  std::cout << "Spacing: " << spacing[0] << " " <<
-    spacing[1] << " " << spacing[2] << std::endl;
-  std::cout << "Bounds: " <<
-    bounds[0] << " " << bounds[1] <<  " " <<
-    bounds[2] << " " << bounds[3] <<  " " <<
-    bounds[4] << " " << bounds[5] << std::endl;
-
+  print (imDims, 3);
+  print (imOrigin, 3);
+  print (imSpacing, 3);
+  print (imBounds, 6);
 
   vtkNew<vtkGPUVolumeRayCastMapper> mapper;
   mapper->SetInputConnection(reader->GetOutputPort());
@@ -179,9 +168,36 @@ int main(int argc, char *argv[])
 
   // Setup the callback to do the work
   vtkNew<vtkImageReslice> reslice;
+  double resliceAxes[16] =
+    { 1.0, 0.0, 0.0, 0.0,
+      0.0, 0.0,-1.0, 0.0,
+      0.0, 1.0,-0.0, 0.0,
+      //9.514, 112.464, 55.429,
+      imBounds[0] + 0.5 * (imBounds[1] - imBounds[0]),
+      imBounds[2] + 0.5 * (imBounds[3] - imBounds[2]),
+      imBounds[4] + 0.5 * (imBounds[5] - imBounds[4]),
+      1.0 };
+  vtkNew<vtkMatrix4x4> resliceMatrix;
+  resliceMatrix->DeepCopy(resliceAxes);
+  resliceMatrix->Transpose();
+  reslice->SetResliceAxes(resliceMatrix.GetPointer());
   reslice->SetInputConnection(reader->GetOutputPort());
   reslice->SetOutputDimensionality(2);
   reslice->SetOutputScalarType(VTK_UNSIGNED_CHAR);
+  reslice->SetOutputSpacing(0.5, 0.5, 1);
+//  reslice->SetOutputOrigin(bounds[0] + 0.5 * (bounds[1] - bounds[0]),
+//                           bounds[2] + 0.5 * (bounds[3] - bounds[2]),
+//                           bounds[4] + 0.5 * (bounds[5] - bounds[4]));
+
+  reslice->Update();
+  vtkImageData* sliceData = reslice->GetOutput();
+  double sliceBounds[6];
+  sliceData->GetBounds(sliceBounds);
+  int sliceExtent[6];
+  sliceData->GetExtent(sliceExtent);
+  print(sliceBounds, 6);
+  print (sliceExtent, 6);
+
   vtkNew<vtkISSCallback> callback;
   callback->Plane = plane.GetPointer();
   callback->ImageReslice = reslice.GetPointer();
@@ -190,6 +206,7 @@ int main(int argc, char *argv[])
   // Display the image
   vtkNew<vtkImageActor> actor;
   actor->GetMapper()->SetInputConnection(reslice->GetOutputPort());
+  //renderer->AddActor(actor.GetPointer());
 
   vtkNew<vtkRenderer> sliceRen;
   sliceRen->SetViewport(0.5, 0, 1, 1);
