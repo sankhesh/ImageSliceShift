@@ -19,6 +19,8 @@
 #include <vtkMatrix4x4.h>
 #include <vtkMath.h>
 #include <vtkTransform.h>
+#include <vtkSphereSource.h>
+#include <vtkPolyDataMapper.h>
 
 //-----------------------------------------------------------------------------
 #define print(name, length) \
@@ -50,9 +52,10 @@ public:
     double * bounds = rep->GetBounds();
 
     // Slice
-    double origin[3], normal[3];
+    double origin[4], normal[3];
     this->Plane->GetOrigin(origin);
     this->Plane->GetNormal(normal);
+    origin[3] = 1.0;
 
     double oldx[3], oldy[3], oldz[3];
     this->ImageReslice->GetResliceAxesDirectionCosines(oldx,oldy,oldz);
@@ -80,6 +83,24 @@ public:
 
     this->ImageReslice->SetResliceAxesDirectionCosines(x,y,normal);
     this->ImageReslice->SetResliceAxesOrigin(origin);
+    //this->ImageReslice->SetOutputOrigin(origin);
+
+    vtkMatrix4x4* m = vtkMatrix4x4::New();
+    vtkMatrix4x4* resliceMatrix = this->ImageReslice->GetResliceAxes();
+    double resliceOrigin[4];
+    m->DeepCopy(resliceMatrix);
+    m->Invert();
+    m->MultiplyPoint(origin, resliceOrigin);
+    double tmpOrigin[4];
+    tmpOrigin[0] = resliceOrigin[0] - 100.0;
+    for (int i = 1; i < 4; ++i)
+      {
+      tmpOrigin[i] = resliceOrigin[i];
+      }
+    this->ImageReslice->SetOutputOrigin(tmpOrigin);
+    m->Delete();
+
+    this->Sphere->SetCenter(resliceOrigin);
     Ren->ResetCamera();
     }
 
@@ -88,6 +109,7 @@ public:
   vtkPlane* Plane;
   vtkImageReslice* ImageReslice;
   vtkRenderer* Ren;
+  vtkSphereSource* Sphere;
 };
 
 //-----------------------------------------------------------------------------
@@ -184,7 +206,7 @@ int main(int argc, char *argv[])
   reslice->SetInputConnection(reader->GetOutputPort());
   reslice->SetOutputDimensionality(2);
   reslice->SetOutputScalarType(VTK_UNSIGNED_CHAR);
-  reslice->SetOutputSpacing(0.5, 0.5, 1);
+  //reslice->SetOutputSpacing(0.5, 0.5, 1);
 //  reslice->SetOutputOrigin(bounds[0] + 0.5 * (bounds[1] - bounds[0]),
 //                           bounds[2] + 0.5 * (bounds[3] - bounds[2]),
 //                           bounds[4] + 0.5 * (bounds[5] - bounds[4]));
@@ -214,6 +236,16 @@ int main(int argc, char *argv[])
   sliceRen->AddActor(actor.GetPointer());
   renderWindow->AddRenderer(sliceRen.GetPointer());
   callback->Ren = sliceRen.GetPointer();
+
+  vtkNew<vtkSphereSource> sphere;
+  sphere->SetCenter(0, 0, 50);
+  sphere->SetRadius(10.0);
+  callback->Sphere = sphere.GetPointer();
+  vtkNew<vtkPolyDataMapper> sphereMapper;
+  sphereMapper->SetInputConnection(sphere->GetOutputPort());
+  vtkNew<vtkActor> sphereActor;
+  sphereActor->SetMapper(sphereMapper.GetPointer());
+  sliceRen->AddActor(sphereActor.GetPointer());
 
   // Enable the widget
   sliceRen->ResetCamera();
